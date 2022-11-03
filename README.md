@@ -1,5 +1,8 @@
 Sliver
 ======
+My walkthrough tut 
+https://1jayhill.medium.com/sliver-489376e9b32f
+
 
 Sliver is an open source cross-platform adversary emulation/red team framework, it can be used by organizations of all sizes to perform security testing. Sliver's implants support C2 over Mutual TLS (mTLS), WireGuard, HTTP(S), and DNS. Implants are dynamically compiled with unique X.509 certificates signed by a per-instance certificate authority generated when you first run the binary.
 
