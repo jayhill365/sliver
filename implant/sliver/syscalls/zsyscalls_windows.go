@@ -62,6 +62,7 @@ var (
 	procGetDC                             = modUser32.NewProc("GetDC")
 	procGetDesktopWindow                  = modUser32.NewProc("GetDesktopWindow")
 	procReleaseDC                         = modUser32.NewProc("ReleaseDC")
+	procCreateProcessWithLogonW           = modadvapi32.NewProc("CreateProcessWithLogonW")
 	procImpersonateLoggedOnUser           = modadvapi32.NewProc("ImpersonateLoggedOnUser")
 	procLogonUserW                        = modadvapi32.NewProc("LogonUserW")
 	procLookupPrivilegeDisplayNameW       = modadvapi32.NewProc("LookupPrivilegeDisplayNameW")
@@ -77,6 +78,7 @@ var (
 	procHeapReAlloc                       = modkernel32.NewProc("HeapReAlloc")
 	procHeapSize                          = modkernel32.NewProc("HeapSize")
 	procInitializeProcThreadAttributeList = modkernel32.NewProc("InitializeProcThreadAttributeList")
+	procModule32FirstW                    = modkernel32.NewProc("Module32FirstW")
 	procPssCaptureSnapshot                = modkernel32.NewProc("PssCaptureSnapshot")
 	procQueueUserAPC                      = modkernel32.NewProc("QueueUserAPC")
 	procUpdateProcThreadAttribute         = modkernel32.NewProc("UpdateProcThreadAttribute")
@@ -221,6 +223,14 @@ func ReleaseDC(hWnd windows.Handle, hDC windows.Handle) (int uint32, err error) 
 	return
 }
 
+func CreateProcessWithLogonW(username *uint16, domain *uint16, password *uint16, logonFlags uint32, appName *uint16, commandLine *uint16, creationFlags uint32, env *uint16, currentDir *uint16, startupInfo *StartupInfoEx, outProcInfo *windows.ProcessInformation) (err error) {
+	r1, _, e1 := syscall.Syscall12(procCreateProcessWithLogonW.Addr(), 11, uintptr(unsafe.Pointer(username)), uintptr(unsafe.Pointer(domain)), uintptr(unsafe.Pointer(password)), uintptr(logonFlags), uintptr(unsafe.Pointer(appName)), uintptr(unsafe.Pointer(commandLine)), uintptr(creationFlags), uintptr(unsafe.Pointer(env)), uintptr(unsafe.Pointer(currentDir)), uintptr(unsafe.Pointer(startupInfo)), uintptr(unsafe.Pointer(outProcInfo)), 0)
+	if r1 == 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+
 func ImpersonateLoggedOnUser(hToken windows.Token) (err error) {
 	r1, _, e1 := syscall.Syscall(procImpersonateLoggedOnUser.Addr(), 1, uintptr(hToken), 0, 0)
 	if r1 == 0 {
@@ -360,6 +370,14 @@ func HeapSize(hHeap windows.Handle, dwFlags uint32, lpMem uintptr) (res uint32, 
 
 func InitializeProcThreadAttributeList(lpAttributeList *PROC_THREAD_ATTRIBUTE_LIST, dwAttributeCount uint32, dwFlags uint32, lpSize *uintptr) (err error) {
 	r1, _, e1 := syscall.Syscall6(procInitializeProcThreadAttributeList.Addr(), 4, uintptr(unsafe.Pointer(lpAttributeList)), uintptr(dwAttributeCount), uintptr(dwFlags), uintptr(unsafe.Pointer(lpSize)), 0, 0)
+	if r1 == 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+
+func Module32FirstW(hSnapshot windows.Handle, lpme *MODULEENTRY32W) (err error) {
+	r1, _, e1 := syscall.Syscall(procModule32FirstW.Addr(), 2, uintptr(hSnapshot), uintptr(unsafe.Pointer(lpme)), 0)
 	if r1 == 0 {
 		err = errnoErr(e1)
 	}

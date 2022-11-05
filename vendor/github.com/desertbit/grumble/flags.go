@@ -128,6 +128,13 @@ Loop:
 			break Loop
 		}
 		args = args[1:]
+
+		// A double dash (--) is used to signify the end of command options,
+		// after which only positional arguments are accepted.
+		if a == "--" {
+			break Loop
+		}
+
 		pos := strings.Index(a, "=")
 		equalVal := ""
 		if pos > 0 {

