@@ -10,7 +10,7 @@ require (
 	github.com/Binject/debug v0.0.0-20210312092933-6277045c2fdf
 	github.com/Binject/go-donut v0.0.0-20210701074227-67a31e2d883e
 	github.com/Binject/universal v0.0.0-20210304094126-daefaa886313
-	github.com/Ne0nd0g/go-clr v1.0.2
+	github.com/Ne0nd0g/go-clr v1.0.3
 	github.com/alecthomas/chroma v0.10.0
 	github.com/cheggaaa/pb/v3 v3.1.0
 	github.com/chromedp/cdproto v0.0.0-20220924210414-0e3390be1777
@@ -37,6 +37,7 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/stretchr/testify v1.8.1
 	github.com/things-go/go-socks5 v0.0.3-0.20210722055343-24af464efe43
+	github.com/xlab/treeprint v1.1.0
 	github.com/yiya1989/sshkrb5 v0.0.0-20201110125252-a1455b75a35e
 	golang.org/x/crypto v0.0.0-20220829220503-c86fa9a7ed90
 	golang.org/x/net v0.0.0-20220722155237-a158d28d115b
@@ -109,7 +110,6 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/thedevsaddam/gojsonq/v2 v2.5.2 // indirect
-	github.com/xlab/treeprint v1.1.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
 	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba // indirect
